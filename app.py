@@ -15,12 +15,13 @@ app = Flask(__name__)
 api = Api(app)
 
 APIKeys = {
-    'ming': {'mykey_bitch': 'j3faajH7Mv'},
+    'ming': 'j3faajH7Mv',
+    'key2': 'blahbah'
 }
 
-def about_if_invalid_key(key_id):
-    if todo_id not in TODOS:
-        abort(404, message="invalid_key")
+def about_if_invalid_key(key):
+    if key not in APIKeys.values:
+        abort(404, message="invalid key")
 
 parser = reqparse.RequestParser()
 parser.add_argument('task')

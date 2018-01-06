@@ -8,3 +8,4 @@ tzlocal
 Flask
 Flask-Restful
 Jsonify
+flask-jsonpify

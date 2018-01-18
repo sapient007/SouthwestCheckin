@@ -163,11 +163,19 @@ def get_checkin_data(number, first, last):
     return data['checkInViewReservationPage']
 
 def checkin(number, first, last):
-    data = get_checkin_data(number, first, last)
-    info_needed = data['_links']['checkIn']
-    url = "{}mobile-air-operations{}".format(BASE_URL, info_needed['href'])
-    logger.debug("Attempting check-in...")
-    return safe_request(url, info_needed['body'])['checkInConfirmationPage']
+    #data = get_checkin_data(number, first, last)
+    #info_needed = data['_links']['checkIn']
+    #url = "{}mobile-air-operations{}".format(BASE_URL, info_needed['href'])
+    #logger.debug("Attempting check-in {} {} with reservation {}").format(first, last, number )
+    #return safe_request(url, info_needed['body'])['checkInConfirmationPage']
+    #data = safe_request(url, info_needed['body'])['checkInConfirmationPage']
+    #for flight in data['flights']:
+    #   for doc in flight['passengers']:
+    #    logger.debug("{} got {}{}!".format(doc['name'], doc['boardingGroup'], doc['boardingPosition']))
+    #add to this info to the record
+    #update reservations
+    reservations[number]['status'] = 'Checked In'
+
 
 def schedule_checkin(flight_time, number, first, last):
     checkin_time = flight_time - timedelta(days=1)
@@ -222,7 +230,7 @@ def auto_checkin(reservation_number, first_name, last_name):
             'flight_time_utc': datetime.strftime(date.astimezone(utc), '%Y-%m-%d %H:%M') , 'status': 'pending'})
 
             #leverage scheduler in PCF to schedule this reservation
-            #schedule_checkin(date, reservation_number, first_name, last_name)
+            schedule_checkin(date, reservation_number, first_name, last_name)
 
 
 class Reservation(Resource):
@@ -242,7 +250,7 @@ class Reservations(Resource):
         return reservations
 
     def post(self):
-        logger.debug("Posting")
+        logger.debug(" Reservations Post Event")
         args = parser.parse_args()
         reservation_id = args['reservation_id']
         if len(reservation_id) is not 6:
@@ -267,10 +275,19 @@ class Checkin(Resource):
                 logger.info("{} got {}{}!".format(doc['name'], doc['boardingGroup'], doc['boardingPosition']))
         return reservations[reservation_id], 201
 
+    def post(self, reservation_id):
+        logger.debug("Chekins Post Event")
+        args = parser.parse_args()
+        reservation = reservations[reservation_id]
+        first_name = reservations[reservation_id]["first_name"]
+        last_name = reservations[reservation_id]["last_name"]
+        checkin(reservation, first_name, last_name)
+        return ("looks good first name {} lastname {} and confirmation {}".format(first_name, last_name, reservation, ), 201)
+
 api.add_resource(Reservation, '/reservations/<reservation_id>')
 api.add_resource(Reservations, '/reservations/')
 api.add_resource(Checkin, '/checkin/<reservation_id>')
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8080, debug=True)

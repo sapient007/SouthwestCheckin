@@ -109,13 +109,9 @@ reservations = {
     }
 }
 
+logging.basicConfig()
 logger = logging.getLogger('SWCheckin')
 logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-logger.addHandler(ch)
 utc = pytz.timezone('UTC')
 
 
@@ -138,8 +134,7 @@ def safe_request(url, body=None):
         else:
             r = requests.get(url, headers=headers)
         data = r.json()
-        #import ipdb; ipdb.set_trace()
-        if 'httpStatusCode' in data and data['httpStatusCode'] in ['NOT_FOUND', 'BAD_REQUEST', 'FORBIDDEN']:
+        if 'httpStatusCode' in data and data['httpStatusCode'] in ['NOT_FOUND', 'BAD_REQUEST', 'FORBIDDEN', 'INTERNAL_SERVER_ERROR']:
             attempts += 1
             logger.debug("StatusCode:" + data['httpStatusCode'] + ", Message: " + data['message'])
             if attempts > MAX_ATTEMPTS:
@@ -160,21 +155,27 @@ def lookup_existing_reservation(number, first, last):
 def get_checkin_data(number, first, last):
     url = "{}mobile-air-operations/v1/mobile-air-operations/page/check-in/{}?first-name={}&last-name={}".format(BASE_URL, number, first, last)
     data = safe_request(url)
-    return data['checkInViewReservationPage']
+    #import ipdb; ipdb.set_trace()
+    logger.debug(data)
+    if data is None:
+        return data
+    return (data['checkInViewReservationPage'])
 
 def checkin(number, first, last):
-    #data = get_checkin_data(number, first, last)
-    #info_needed = data['_links']['checkIn']
-    #url = "{}mobile-air-operations{}".format(BASE_URL, info_needed['href'])
-    #logger.debug("Attempting check-in {} {} with reservation {}").format(first, last, number )
+    data = get_checkin_data(number, first, last)
+    if data is None:
+        return False
+    info_needed = data['_links']['checkIn']
+    url = "{}mobile-air-operations{}".format(BASE_URL, info_needed['href'])
+    logger.debug("Attempting check-in {} {} with reservation {}").format(first, last, number )
     #return safe_request(url, info_needed['body'])['checkInConfirmationPage']
-    #data = safe_request(url, info_needed['body'])['checkInConfirmationPage']
-    #for flight in data['flights']:
-    #   for doc in flight['passengers']:
-    #    logger.debug("{} got {}{}!".format(doc['name'], doc['boardingGroup'], doc['boardingPosition']))
-    #add to this info to the record
+    data = safe_request(url, info_needed['body'])['checkInConfirmationPage']
+    for flight in data['flights']:
+       for doc in flight['passengers']:
+        logger.debug("{} got {}{}!".format(doc['name'], doc['boardingGroup'], doc['boardingPosition']))
     #update reservations
     reservations[number]['status'] = 'Checked In'
+    return True
 
 
 def schedule_checkin(flight_time, number, first, last):
@@ -196,7 +197,6 @@ def schedule_checkin(flight_time, number, first, last):
 
 def auto_checkin(reservation_number, first_name, last_name):
     body = lookup_existing_reservation(reservation_number, first_name, last_name)
-
     if body is None:
         return -1
     logger.debug("legs found, adding to record")
@@ -230,23 +230,26 @@ def auto_checkin(reservation_number, first_name, last_name):
             'flight_time_utc': datetime.strftime(date.astimezone(utc), '%Y-%m-%d %H:%M') , 'status': 'pending'})
 
             #leverage scheduler in PCF to schedule this reservation
-            schedule_checkin(date, reservation_number, first_name, last_name)
+            #schedule_checkin(date, reservation_number, first_name, last_name)
 
 
 class Reservation(Resource):
     """takes on a confirmation number for checkin and can also del a confirmation"""
     def get(self, reservation_id):
+        logger.warning("getting reservation")
         abort_if_invalid_reservation_id(reservation_id)
         return reservations[reservation_id]
 
     def delete(self, reservation_id):
         abort_if_invalid_reservation_id(reservation_id)
+        logger.debug("getting reservation")
         del reservations[reservation_id]
         return '', 204
 
 class Reservations(Resource):
     """returns all reservations and post new reservations"""
     def get(self):
+        logger.debug("getting reservations")
         return reservations
 
     def post(self):
@@ -267,13 +270,6 @@ class Reservations(Resource):
 
 class Checkin(Resource):
     """takes on a confirmation number for checkin and can also del a confirmation"""
-    def get(self, reservation_id):
-        abort_if_invalid_reservation_id(reservation_id)
-        data = checkin(reservations[reservation_id], reservations[reservation_id].get("first_name"), reservations[reservation_id].get("last_name") )
-        for flight in data['flights']:
-            for doc in flight['passengers']:
-                logger.info("{} got {}{}!".format(doc['name'], doc['boardingGroup'], doc['boardingPosition']))
-        return reservations[reservation_id], 201
 
     def post(self, reservation_id):
         logger.debug("Chekins Post Event")
@@ -281,8 +277,10 @@ class Checkin(Resource):
         reservation = reservations[reservation_id]
         first_name = reservations[reservation_id]["first_name"]
         last_name = reservations[reservation_id]["last_name"]
-        checkin(reservation, first_name, last_name)
-        return ("looks good first name {} lastname {} and confirmation {}".format(first_name, last_name, reservation, ), 201)
+        if checkin(reservation_id, first_name, last_name) is True:
+            return ("looks good first name {} lastname {} and confirmation {}".format(first_name, last_name, reservation_id, ), 201)
+        else:
+            return ("was not able to check in", 201)
 
 api.add_resource(Reservation, '/reservations/<reservation_id>')
 api.add_resource(Reservations, '/reservations/')
